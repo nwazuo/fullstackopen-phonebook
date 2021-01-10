@@ -1,7 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const morgan = require('morgan');
 const cors = require('cors');
 const app = express();
+
+const Person = require('./models/phonebook');
 
 morgan.token('body', (req, res) => JSON.stringify(req.body));
 
@@ -35,60 +38,95 @@ let contacts = [
 
 app.get('/api/persons', (req, res) => {
 	console.log('-> request recieved');
-	res.json(contacts);
+
+	Person.find({}).then((result) => {
+		console.log('--> fetched data');
+		result.forEach((obj) => console.log(obj));
+		res.json(result).end();
+	});
 });
 
 app.get('/info', (req, res) => {
-	res.send(
-		`<p>Phonebook has info for ${
-			contacts.length
-		} people</p><p>${new Date().toUTCString()}</p>`
-	);
+	Person.find({}).then((result) => {
+		res.send(
+			`<p>Phonebook has info for ${
+				result.length
+			} people</p><p>${new Date().toUTCString()}</p>`
+		);
+	});
 });
 
 app.get('/api/persons/:id', (req, res) => {
-	if (contacts.find((n) => Number(req.params.id) === n.id) === undefined) {
-		console.log(`--> Id not found!`);
-		return res.status(400).json({
-			error: 'no person with such id',
-		});
-	} else {
-		console.log(`Got ya, coming through with your response`);
-		res.json(contacts.find((n) => Number(req.params.id) === n.id)).end();
-	}
+	const id = req.params.id;
+
+	Person.findById(id)
+		.then((result) => {
+			res.json(result).end();
+		})
+		.catch((err) => next(err));
 });
 
-app.delete('/api/persons/:id', (req, res) => {
-	const id = Number(req.params.id);
-	contacts = contacts.filter((n) => n.id !== id);
-
-	res.status(204).json({ message: 'Resource deleted successfully' }).end();
+app.delete('/api/persons/:id', (req, res, next) => {
+	const id = req.params.id;
+	Person.findByIdAndRemove(id)
+		.then((result) => {
+			res.status(204).json(result).end();
+		})
+		.catch((err) => next(err));
 });
 
-app.post('/api/persons', (req, res) => {
+app.post('/api/persons', (req, res, next) => {
 	let name = req.body.name;
 	let number = req.body.number;
 
 	if (!name || !number) {
 		console.log(`--> missing fields`);
-		return res.json({ error: `name or number is missing` });
-	}
-	if (contacts.find((n) => n.name === name)) {
-		console.log(`--> resource exists`);
-		return res.status(409).json({ error: `name already exists` });
+		return res.status(400).json({ error: `name or number is missing` });
 	}
 
-	let contact = {
-		id: Math.round(Math.random() * 10000),
+	let contact = new Person({
 		name,
 		number,
+	});
+
+	// contacts = contacts.concat(contact);
+
+	contact
+		.save()
+		.then((result) => {
+			console.log('--> saving new contact');
+			res.json(result).end();
+		})
+		.catch((err) => next(err));
+});
+
+app.put('/api/persons/:id', (req, res, next) => {
+	const id = req.params.id;
+	const newPerson = {
+		number: req.body.number,
 	};
 
-	contacts = contacts.concat(contact);
-
-	console.log(`-->got here, should work now`);
-	res.json(contact).end();
+	Person.findByIdAndUpdate(id, newPerson, { new: true, runValidators: true, context: 'query' })
+		.then((result) => {
+			console.log('--> replaced contact successfully');
+			res.json(result).end();
+		})
+		.catch((err) => next(err));
 });
+
+const errorHandler = (err, req, res, next) => {
+	console.error(err.message);
+
+	if (err.name === 'CastError') {
+		res.status(400).send({ error: 'malformed id' });
+	} else if (err.name === 'ValidationError') {
+		res.status(400).send({ error: err.message });
+	}
+
+	next();
+};
+
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
